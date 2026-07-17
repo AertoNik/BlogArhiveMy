@@ -1461,7 +1461,8 @@
       journalMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
       renderToken: 0,
       previousVisit: null,
-      audioContext: null
+      audioContext: null,
+      sceneAnimation: null
     };
 
     const $ = (selector, root = document) => root.querySelector(selector);
@@ -3193,32 +3194,243 @@
       document.documentElement.dataset.pattern = 'checker';
     }
 
+    function scenePerformanceProfile(scene, intensity, viewportWidth = typeof window === 'undefined' ? 1200 : window.innerWidth) {
+      const safeIntensity = SCENE_INTENSITIES.includes(intensity) ? intensity : 'normal';
+      const baseCount = { low: 7, normal: 11, high: 17 }[safeIntensity];
+      const multiplier = scene === 'rain' ? 1.25 : scene === 'bats' ? .52 : 1;
+      const requestedFps = { low: 18, normal: 22, high: 26 }[safeIntensity];
+      return {
+        count: Math.max(4, Math.round(baseCount * multiplier)),
+        fps: viewportWidth < 760 ? Math.min(requestedFps, 20) : requestedFps,
+        opacity: { low: .32, normal: .48, high: .64 }[safeIntensity]
+      };
+    }
+
+    function stopAmbientScene() {
+      const animation = state.sceneAnimation;
+      if (!animation) return;
+      animation.running = false;
+      if (animation.frameId) cancelAnimationFrame(animation.frameId);
+      animation.frameId = null;
+      state.sceneAnimation = null;
+    }
+
+    function resizeAmbientCanvas(animation) {
+      const width = Math.max(1, Math.round(window.innerWidth));
+      const height = Math.max(1, Math.round(window.innerHeight));
+      if (animation.canvas.width !== width) animation.canvas.width = width;
+      if (animation.canvas.height !== height) animation.canvas.height = height;
+      animation.width = width;
+      animation.height = height;
+      animation.needsResize = false;
+      animation.particles.forEach(particle => {
+        particle.x = clamp(particle.x, -particle.size, width + particle.size);
+        particle.y = clamp(particle.y, -particle.size, height + particle.size);
+      });
+    }
+
+    function createAmbientParticle(scene, width, height, index, count) {
+      const position = (index + .5) / Math.max(1, count);
+      const particle = {
+        x: (position * width + (index * 43) % 97) % width,
+        y: ((index * 71) % 101) / 100 * height,
+        size: 2 + (index * 7) % 5,
+        speed: .25 + (index * 11) % 8 / 10,
+        drift: ((index * 13) % 9 - 4) / 10,
+        alpha: .38 + (index * 17) % 48 / 100,
+        phase: index * .83,
+        rotation: index * .7,
+        spin: ((index % 3) - 1) * .025
+      };
+      if (scene === 'rain') {
+        particle.size = 11 + (index * 7) % 13;
+        particle.speed = 4.4 + (index * 9) % 27 / 10;
+        particle.drift = -.65 + (index % 4) * .12;
+      } else if (scene === 'snow') {
+        particle.size = 1.7 + (index % 4) * .65;
+        particle.speed = .35 + (index % 5) * .11;
+      } else if (scene === 'fireflies') {
+        particle.size = 1.4 + (index % 4) * .55;
+        particle.speed = .08 + (index % 3) * .025;
+      } else if (scene === 'dust') {
+        particle.size = .8 + (index % 4) * .45;
+        particle.speed = .1 + (index % 5) * .035;
+      } else if (scene === 'bats') {
+        particle.size = 5 + (index % 4) * 1.4;
+        particle.speed = 1.05 + (index % 5) * .2;
+        particle.x = -particle.size - position * width;
+      } else if (scene === 'leaves') {
+        particle.size = 3.5 + (index % 5) * .8;
+        particle.speed = .45 + (index % 5) * .13;
+      } else if (scene === 'neon') {
+        particle.size = 2 + (index % 4) * .8;
+        particle.speed = .1 + (index % 4) * .035;
+      }
+      return particle;
+    }
+
+    function drawAmbientFrame(animation, delta) {
+      const { ctx, width, height, scene, colors } = animation;
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineCap = 'round';
+      for (const particle of animation.particles) {
+        particle.phase += .025 * delta;
+        if (scene === 'rain') {
+          particle.y += particle.speed * delta;
+          particle.x += particle.drift * delta;
+          if (particle.y > height + particle.size || particle.x < -particle.size) {
+            particle.y = -particle.size;
+            particle.x = (particle.x + width + particle.size * 3) % width;
+          }
+          ctx.globalAlpha = particle.alpha;
+          ctx.strokeStyle = colors.rain;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(particle.x, particle.y);
+          ctx.lineTo(particle.x + particle.drift * 5, particle.y + particle.size);
+          ctx.stroke();
+        } else if (scene === 'snow') {
+          particle.y += particle.speed * delta;
+          particle.x += Math.sin(particle.phase) * .16 * delta;
+          if (particle.y > height + particle.size) { particle.y = -particle.size; particle.x = (particle.x + width * .37) % width; }
+          ctx.globalAlpha = particle.alpha;
+          ctx.fillStyle = colors.snow;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (scene === 'fireflies') {
+          particle.x += Math.cos(particle.phase * .73) * particle.speed * delta;
+          particle.y += Math.sin(particle.phase) * particle.speed * delta;
+          if (particle.x < 0) particle.x = width; else if (particle.x > width) particle.x = 0;
+          if (particle.y < 0) particle.y = height; else if (particle.y > height) particle.y = 0;
+          const glow = .45 + Math.sin(particle.phase * 1.6) * .3;
+          ctx.globalAlpha = Math.max(.08, glow * particle.alpha * .35);
+          ctx.fillStyle = colors.fireflies;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size * 2.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = Math.max(.25, glow);
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size * .65, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (scene === 'dust') {
+          particle.y -= particle.speed * delta;
+          particle.x += Math.sin(particle.phase) * .08 * delta;
+          if (particle.y < -particle.size) { particle.y = height + particle.size; particle.x = (particle.x + width * .29) % width; }
+          ctx.globalAlpha = particle.alpha * (.55 + Math.sin(particle.phase) * .25);
+          ctx.fillStyle = colors.dust;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (scene === 'bats') {
+          particle.x += particle.speed * delta;
+          particle.y += Math.sin(particle.phase * 1.8) * .22 * delta;
+          if (particle.x > width + particle.size * 2) { particle.x = -particle.size * 2; particle.y = (particle.y + height * .41) % height; }
+          const wing = Math.sin(particle.phase * 3) * particle.size * .38;
+          ctx.globalAlpha = particle.alpha;
+          ctx.strokeStyle = colors.bats;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(particle.x - particle.size, particle.y + wing);
+          ctx.quadraticCurveTo(particle.x - particle.size * .45, particle.y - particle.size * .65, particle.x, particle.y);
+          ctx.quadraticCurveTo(particle.x + particle.size * .45, particle.y - particle.size * .65, particle.x + particle.size, particle.y + wing);
+          ctx.stroke();
+        } else if (scene === 'leaves') {
+          particle.y += particle.speed * delta;
+          particle.x += Math.sin(particle.phase) * .3 * delta;
+          particle.rotation += particle.spin * delta;
+          if (particle.y > height + particle.size * 2) { particle.y = -particle.size * 2; particle.x = (particle.x + width * .31) % width; }
+          ctx.save();
+          ctx.translate(particle.x, particle.y);
+          ctx.rotate(particle.rotation);
+          ctx.globalAlpha = particle.alpha;
+          ctx.fillStyle = indexColor(colors.leaves, particle.phase);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, particle.size, particle.size * .48, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else if (scene === 'neon') {
+          particle.x += Math.cos(particle.phase) * particle.speed * delta;
+          particle.y += Math.sin(particle.phase * .77) * particle.speed * delta;
+          if (particle.x < 0) particle.x = width; else if (particle.x > width) particle.x = 0;
+          if (particle.y < 0) particle.y = height; else if (particle.y > height) particle.y = 0;
+          ctx.globalAlpha = particle.alpha * (.65 + Math.sin(particle.phase * 1.4) * .25);
+          ctx.strokeStyle = colors.neon;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(particle.x, particle.y - particle.size);
+          ctx.lineTo(particle.x + particle.size, particle.y);
+          ctx.lineTo(particle.x, particle.y + particle.size);
+          ctx.lineTo(particle.x - particle.size, particle.y);
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function indexColor(colors, phase) {
+      return colors[Math.abs(Math.floor(phase * 2)) % colors.length];
+    }
+
     function renderAmbientScene() {
-      const container = $('#ambientScene');
+      const canvas = $('#ambientScene');
       const scene = SCENES.includes(state.settings.scene) ? state.settings.scene : 'none';
       const intensity = SCENE_INTENSITIES.includes(state.settings.sceneIntensity) ? state.settings.sceneIntensity : 'normal';
-      const key = `${scene}:${intensity}`;
-      if (container.dataset.renderKey === key) return;
-      container.dataset.renderKey = key;
-      container.dataset.scene = scene;
-      container.replaceChildren();
-      container.classList.toggle('hidden', scene === 'none');
-      if (scene === 'none') return;
-      const baseCounts = { low: 10, normal: 17, high: 27 };
-      const sceneMultiplier = scene === 'bats' ? .48 : scene === 'rain' ? 1.3 : 1;
-      const count = Math.max(5, Math.round(baseCounts[intensity] * sceneMultiplier));
-      const symbol = { rain: '│', snow: '✦', fireflies: '•', dust: '·', bats: '🦇', leaves: '🍂', neon: '◆' }[scene];
-      container.style.setProperty('--scene-opacity', { low: '.38', normal: '.58', high: '.78' }[intensity]);
-      for (let index = 0; index < count; index += 1) {
-        const particle = createElement('span', { text: symbol, attrs: { 'aria-hidden': 'true' } });
-        particle.style.setProperty('--x', `${(index * 37 + 9) % 101}%`);
-        particle.style.setProperty('--y', `${(index * 53 + 7) % 88 + 5}%`);
-        particle.style.setProperty('--delay', `${-((index * 23) % 17)}s`);
-        particle.style.setProperty('--duration', `${7 + ((index * 17) % 12)}s`);
-        particle.style.setProperty('--size', `${scene === 'rain' ? 13 : 8 + ((index * 7) % 13)}px`);
-        particle.style.setProperty('--drift', `${-28 + ((index * 19) % 57)}px`);
-        particle.style.setProperty('--particle-opacity', String(.35 + ((index * 11) % 55) / 100));
-        container.append(particle);
+      const reducedMotion = Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+      const themeKey = state.settings.theme === 'custom' ? state.settings.customTheme?.accent : state.settings.theme;
+      const key = `${scene}:${intensity}:${themeKey}:${reducedMotion}`;
+      if (canvas.dataset.renderKey === key && state.sceneAnimation?.running) return;
+      stopAmbientScene();
+      canvas.dataset.renderKey = key;
+      canvas.dataset.scene = scene;
+      canvas.classList.toggle('hidden', scene === 'none' || reducedMotion);
+      if (scene === 'none' || reducedMotion) {
+        canvas.width = 1;
+        canvas.height = 1;
+        return;
+      }
+      const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+      if (!ctx) {
+        canvas.classList.add('hidden');
+        return;
+      }
+      const profile = scenePerformanceProfile(scene, intensity);
+      canvas.style.setProperty('--scene-opacity', String(profile.opacity));
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#8fcfff';
+      const animation = {
+        canvas, ctx, scene, intensity, profile, width: 1, height: 1,
+        colors: { rain: '#9ed4ff', snow: '#ffffff', fireflies: '#fff176', dust: '#d4b47d', bats: accent, leaves: ['#d78a3b', '#b85b32', '#d6aa45'], neon: accent },
+        particles: [], frameId: null, lastDraw: 0, needsResize: true, running: true
+      };
+      resizeAmbientCanvas(animation);
+      animation.particles = Array.from({ length: profile.count }, (_, index) => createAmbientParticle(scene, animation.width, animation.height, index, profile.count));
+      const frameInterval = 1000 / profile.fps;
+      animation.draw = timestamp => {
+        animation.frameId = null;
+        if (!animation.running || document.hidden) return;
+        if (animation.needsResize) resizeAmbientCanvas(animation);
+        const elapsed = animation.lastDraw ? timestamp - animation.lastDraw : frameInterval;
+        if (elapsed >= frameInterval) {
+          const delta = Math.min(2.4, elapsed / (1000 / 60));
+          animation.lastDraw = timestamp - (elapsed % frameInterval);
+          drawAmbientFrame(animation, delta);
+        }
+        animation.frameId = requestAnimationFrame(animation.draw);
+      };
+      state.sceneAnimation = animation;
+      if (!document.hidden) animation.frameId = requestAnimationFrame(animation.draw);
+    }
+
+    function handleAmbientSceneVisibility() {
+      const animation = state.sceneAnimation;
+      if (!animation?.running) return;
+      if (document.hidden) {
+        if (animation.frameId) cancelAnimationFrame(animation.frameId);
+        animation.frameId = null;
+      } else if (!animation.frameId) {
+        animation.lastDraw = 0;
+        animation.frameId = requestAnimationFrame(animation.draw);
       }
     }
 
@@ -3907,7 +4119,10 @@
         if (event.target.closest('button')) playClickSound();
         if (!event.target.closest('.post-menu')) $$('.post-menu[open]').forEach(menu => menu.removeAttribute('open'));
       });
-      window.addEventListener('beforeunload', revokeAllImageUrls);
+      document.addEventListener('visibilitychange', handleAmbientSceneVisibility);
+      window.addEventListener('resize', () => { if (state.sceneAnimation) state.sceneAnimation.needsResize = true; }, { passive: true });
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', renderAmbientScene);
+      window.addEventListener('beforeunload', () => { stopAmbientScene(); revokeAllImageUrls(); });
     }
 
     /* ==================== Инициализация приложения ==================== */

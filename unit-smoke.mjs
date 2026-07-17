@@ -9,7 +9,7 @@ if (!match) throw new Error('Встроенный script не найден.');
 let source = match[1];
 source = source.replace(
   /\s*initializeApplication\(\);\s*\}\)\(\);\s*$/,
-  `\n  globalThis.__retroTest = { CONFIG, THEMES, SCENES, POST_DECORATION_STYLES, POST_STICKERS, EMOTION_REASONS, DEFAULT_CUSTOM_THEME, CHAPTER_COLORS, ACHIEVEMENTS, state, normalizeProfile, normalizeCustomTheme, normalizeSettings, normalizeMeta, normalizeChapter, normalizeFutureLetter, normalizeAchievements, safeHexColor, mixHex, isDarkHex, migratePost, constrainStats, createDemoPosts, filteredPosts, postFingerprint, simulateActivity, writingStreak, roomProgress, moodCategory, monthKey, buildMonthlyJournal, buildMuseumExhibits, diaryAgeInfo, letterIsDue, achievementRuleMet, evaluateAchievements, validateBackupStructure, buildBackup, applyImport };\n  })();`
+  `\n  globalThis.__retroTest = { CONFIG, THEMES, SCENES, POST_DECORATION_STYLES, POST_STICKERS, EMOTION_REASONS, DEFAULT_CUSTOM_THEME, CHAPTER_COLORS, ACHIEVEMENTS, state, normalizeProfile, normalizeCustomTheme, normalizeSettings, normalizeMeta, normalizeChapter, normalizeFutureLetter, normalizeAchievements, safeHexColor, mixHex, isDarkHex, scenePerformanceProfile, createAmbientParticle, drawAmbientFrame, migratePost, constrainStats, createDemoPosts, filteredPosts, postFingerprint, simulateActivity, writingStreak, roomProgress, moodCategory, monthKey, buildMonthlyJournal, buildMuseumExhibits, diaryAgeInfo, letterIsDue, achievementRuleMet, evaluateAchievements, validateBackupStructure, buildBackup, applyImport };\n  })();`
 );
 
 const deterministicMath = Object.create(Math);
@@ -73,6 +73,29 @@ assert(customSettings.theme === 'custom' && customSettings.scene === 'fireflies'
 assert(customSettings.customTheme.name === 'Ночная библиотека' && customSettings.customTheme.panel === api.DEFAULT_CUSTOM_THEME.panel && customSettings.customTheme.radius === 22, 'Конструктор темы не очищает повреждённые значения.');
 assert(api.normalizeSettings({ scene: 'storm', sceneIntensity: 'extreme' }).scene === 'none', 'Неизвестная фоновая сцена не заменяется безопасным значением.');
 assert(api.mixHex('#000000', '#ffffff', .5) === '#808080' && api.isDarkHex('#111111') && !api.isDarkHex('#fefefe'), 'Цветовые функции конструктора работают неверно.');
+const highRainProfile = api.scenePerformanceProfile('rain', 'high', 1400);
+const mobileRainProfile = api.scenePerformanceProfile('rain', 'high', 390);
+const lowSnowProfile = api.scenePerformanceProfile('snow', 'low', 1400);
+assert(highRainProfile.count <= 21 && highRainProfile.fps <= 26, 'Насыщенная сцена снова превышает безопасный бюджет частиц или кадров.');
+assert(mobileRainProfile.fps <= 20 && lowSnowProfile.count < highRainProfile.count, 'Мобильное ограничение сцены или градация насыщенности не работают.');
+const testParticle = api.createAmbientParticle('rain', 1000, 700, 2, highRainProfile.count);
+assert(Number.isFinite(testParticle.x) && testParticle.speed > 0 && testParticle.size > 0, 'Canvas-частица создаётся с некорректными параметрами.');
+const noopCanvasMethod = () => {};
+const mockCanvasContext = {
+  clearRect: noopCanvasMethod, beginPath: noopCanvasMethod, moveTo: noopCanvasMethod, lineTo: noopCanvasMethod,
+  quadraticCurveTo: noopCanvasMethod, arc: noopCanvasMethod, ellipse: noopCanvasMethod, closePath: noopCanvasMethod,
+  stroke: noopCanvasMethod, fill: noopCanvasMethod, save: noopCanvasMethod, restore: noopCanvasMethod,
+  translate: noopCanvasMethod, rotate: noopCanvasMethod
+};
+for (const scene of api.SCENES.filter(item => item !== 'none')) {
+  const particle = api.createAmbientParticle(scene, 1000, 700, 1, 10);
+  api.drawAmbientFrame({
+    ctx: mockCanvasContext, width: 1000, height: 700, scene,
+    colors: { rain: '#9ed4ff', snow: '#ffffff', fireflies: '#fff176', dust: '#d4b47d', bats: '#333333', leaves: ['#d78a3b'], neon: '#00ffff' },
+    particles: [particle]
+  }, 1);
+  assert(Number.isFinite(particle.x) && Number.isFinite(particle.y), `Сцена ${scene} повредила координаты canvas-частицы.`);
+}
 assert(api.normalizeMeta({ welcomeSeen: true }).welcomeSeen === true, 'Статус ознакомительного письма не сохраняется.');
 
 const normalizedChapter = api.normalizeChapter({ id: 'chapter-test', name: '  Лето  ', color: '#bad' });
@@ -202,4 +225,4 @@ try {
 }
 assert(duplicateRejected, 'Копия с повторяющимися ID не была отклонена.');
 
-console.log('OK: темы, сцены, музей, украшения, эмоции, старение, публикации и резервные копии прошли smoke-тесты.');
+console.log('OK: оптимизированные сцены, темы, музей, эмоции, публикации и резервные копии прошли smoke-тесты.');

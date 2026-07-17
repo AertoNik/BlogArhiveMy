@@ -48,7 +48,8 @@ const requiredFunctions = [
   'normalizeChapter', 'normalizeFutureLetter', 'evaluateAchievements', 'renderFutureLetters',
   'renderDiaryRoom', 'renderChapters', 'buildMonthlyJournal', 'openMonthlyJournal', 'moodCategory',
   'normalizeCustomTheme', 'openCustomThemeBuilder', 'renderAmbientScene', 'buildMuseumExhibits',
-  'openMemoryMuseum', 'diaryAgeInfo', 'renderDiaryAging', 'updateEmotionControls'
+  'openMemoryMuseum', 'diaryAgeInfo', 'renderDiaryAging', 'updateEmotionControls',
+  'scenePerformanceProfile', 'stopAmbientScene', 'drawAmbientFrame', 'handleAmbientSceneVisibility'
 ];
 for (const name of requiredFunctions) check(new RegExp(`function\\s+${name}\\s*\\(`).test(html), `Отсутствует функция ${name}().`);
 
@@ -63,6 +64,9 @@ for (const theme of ['vampire', 'detective', 'midnight', 'cyber', 'forest', 'oce
 
 check((html.match(/<option value="[^"\n]+">/g) || []).length >= 30, 'Ожидался расширенный выбор тем и настроений.');
 check(!/backdrop-filter\s*:/i.test(html), 'Тяжёлое размытие фона модального окна не удалено.');
+check(/<canvas[^>]+id="ambientScene"/.test(html), 'Живая сцена должна использовать единый canvas.');
+check(!/\.ambient-scene\s+span/.test(html), 'Остались тяжёлые DOM-частицы живой сцены.');
+check(!/will-change\s*:\s*transform/i.test(html), 'Осталось принудительное создание графического слоя для каждой частицы.');
 check(html.includes('await refreshProfileInterface();'), 'Сохранение профиля по-прежнему может запускать тяжёлую перерисовку ленты.');
 check(!/локальн|только на этом устройстве|реальных пользователей|из этого браузера|100%<br>LOCAL|NO<br>TRACKING/i.test(html), 'Остались пользовательские упоминания локальности или отсутствия реальных пользователей.');
 for (const marker of ['Письма в будущее', 'Календарь настроений', 'Комната дневника', 'Главы жизни', 'Коллекция марок', 'Журнал месяца', 'Конструктор собственной темы', 'Музей воспоминаний', 'Живая фоновая сцена', 'Старение дневника', 'Сила эмоции', 'Украшение публикации']) {
